@@ -110,125 +110,224 @@ And I'll download and send it back to you!
         await self.download_and_send_video(event, message)
     
     async def download_and_send_video(self, event, url):
-        """Download video and send it to user"""
+        """Download video and send it to user with WARP retry on rate limiting"""
         # Send initial processing message
         status_msg = await event.respond("🔍 Processing your link...")
         
         downloaded_file = None
+        max_retries = 2
         
-        try:
-            # Detect platform
-            platform = get_platform_for_url(url)
-            
-            if platform:
-                await status_msg.edit(f"🎯 Detected: {platform['name']}\n📥 Downloading...")
+        for attempt in range(max_retries + 1):
+            try:
+                if attempt > 0:
+                    await status_msg.edit(f"🔄 Retry attempt {attempt}/{max_retries}...")
+                    await asyncio.sleep(1)
                 
-                # Check if platform is enabled
-                if not platform['enabled']:
+                # Detect platform
+                platform = get_platform_for_url(url)
+                
+                if platform:
+                    if attempt == 0:  # Only update on first attempt
+                        await status_msg.edit(f"🎯 Detected: {platform['name']}\n📥 Downloading...")
+                    
+                    # Check if platform is enabled
+                    if not platform['enabled']:
+                        await status_msg.edit(
+                            f"⚠️ {platform['name']} support is not enabled yet.\n"
+                            f"Please add cookies to: cookies/{platform['key']}.txt"
+                        )
+                        return
+                else:
+                    if attempt == 0:
+                        await status_msg.edit("📥 Downloading video...")
+                
+                # Prepare download options using the same config as main.py
+                temp_file = os.path.join(DOWNLOADS_DIR, f'temp_{event.chat_id}_%(title)s.%(ext)s')
+                
+                # Start with default options from config
+                ydl_opts = DEFAULT_YT_DLP_OPTIONS.copy()
+                ydl_opts['outtmpl'] = temp_file
+                
+                # Add cookies if available for this platform (same logic as downloader.py)
+                if platform and platform['cookies_file']:
+                    cookies_file = platform['cookies_file']
+                    if os.path.exists(cookies_file):
+                        ydl_opts['cookiefile'] = cookies_file
+                        print(f"🍪 Using cookies from: {cookies_file}")
+                    else:
+                        print(f"⚠️  Cookies file not found: {cookies_file}")
+                        if attempt == 0:
+                            await status_msg.edit(
+                                f"⚠️  Cookies file not found for {platform['name']}\n"
+                                f"Expected at: {cookies_file}\n"
+                                "Download may fail for private content."
+                            )
+                            await asyncio.sleep(2)
+                            await status_msg.edit("📥 Attempting download anyway...")
+                
+                # Download the video
+                video_info = None
+                
+                print(f"📥 Downloading from: {url} (attempt {attempt + 1})")
+                print(f"🔧 yt-dlp options: {ydl_opts}")
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    video_info = {
+                        'title': info.get('title', 'Video'),
+                        'duration': info.get('duration', 0),
+                        'width': info.get('width', 0),
+                        'height': info.get('height', 0),
+                    }
+                    downloaded_file = ydl.prepare_filename(info)
+                
+                # Check if file exists
+                if not os.path.exists(downloaded_file):
+                    if attempt < max_retries:
+                        print(f"⚠️  File not found, retrying...")
+                        continue
+                    else:
+                        await status_msg.edit("❌ Download failed. Please try again or check the URL.")
+                        return
+                
+                # Check file size
+                file_size = os.path.getsize(downloaded_file)
+                if file_size > MAX_FILE_SIZE:
+                    os.remove(downloaded_file)
                     await status_msg.edit(
-                        f"⚠️ {platform['name']} support is not enabled yet.\n"
-                        f"Please add cookies to: cookies/{platform['key']}.txt"
+                        f"❌ Video is too large ({file_size / 1024 / 1024:.1f}MB)\n"
+                        f"Maximum size: {MAX_FILE_SIZE / 1024 / 1024:.0f}MB"
                     )
                     return
-            else:
-                await status_msg.edit("📥 Downloading video...")
-            
-            # Prepare download options using the same config as main.py
-            temp_file = os.path.join(DOWNLOADS_DIR, f'temp_{event.chat_id}_%(title)s.%(ext)s')
-            
-            # Start with default options from config
-            ydl_opts = DEFAULT_YT_DLP_OPTIONS.copy()
-            ydl_opts['outtmpl'] = temp_file
-            
-            # Add cookies if available for this platform (same logic as downloader.py)
-            if platform and platform['cookies_file']:
-                cookies_file = platform['cookies_file']
-                if os.path.exists(cookies_file):
-                    ydl_opts['cookiefile'] = cookies_file
-                    print(f"🍪 Using cookies from: {cookies_file}")
-                else:
-                    print(f"⚠️  Cookies file not found: {cookies_file}")
-                    await status_msg.edit(
-                        f"⚠️  Cookies file not found for {platform['name']}\n"
-                        f"Expected at: {cookies_file}\n"
-                        "Download may fail for private content."
-                    )
-                    await asyncio.sleep(2)
-                    await status_msg.edit("📥 Attempting download anyway...")
-            
-            # Download the video
-            video_info = None
-            
-            print(f"📥 Downloading from: {url}")
-            print(f"🔧 yt-dlp options: {ydl_opts}")
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                video_info = {
-                    'title': info.get('title', 'Video'),
-                    'duration': info.get('duration', 0),
-                    'width': info.get('width', 0),
-                    'height': info.get('height', 0),
-                }
-                downloaded_file = ydl.prepare_filename(info)
-            
-            # Check if file exists
-            if not os.path.exists(downloaded_file):
-                await status_msg.edit("❌ Download failed. Please try again or check the URL.")
-                return
-            
-            # Check file size
-            file_size = os.path.getsize(downloaded_file)
-            if file_size > MAX_FILE_SIZE:
-                os.remove(downloaded_file)
+                
+                # Update status
                 await status_msg.edit(
-                    f"❌ Video is too large ({file_size / 1024 / 1024:.1f}MB)\n"
-                    f"Maximum size: {MAX_FILE_SIZE / 1024 / 1024:.0f}MB"
+                    f"✅ Downloaded! ({file_size / 1024 / 1024:.1f}MB)\n"
+                    f"📤 Uploading to Telegram..."
                 )
-                return
+                
+                # Send the video
+                await self.client.send_file(
+                    event.chat_id,
+                    downloaded_file,
+                    caption=f"🎬 **{video_info['title']}**",
+                    supports_streaming=True,
+                    attributes=[
+                        DocumentAttributeVideo(
+                            duration=int(video_info['duration']),
+                            w=video_info['width'],
+                            h=video_info['height'],
+                            supports_streaming=True
+                        )
+                    ]
+                )
+                
+                # Delete status message and downloaded file
+                await status_msg.delete()
+                os.remove(downloaded_file)
+                
+                print(f"✅ Sent video to user {event.chat_id}: {video_info['title']}")
+                return  # Success, exit the retry loop
             
-            # Update status
-            await status_msg.edit(
-                f"✅ Downloaded! ({file_size / 1024 / 1024:.1f}MB)\n"
-                f"📤 Uploading to Telegram..."
-            )
-            
-            # Send the video
-            await self.client.send_file(
-                event.chat_id,
-                downloaded_file,
-                caption=f"🎬 **{video_info['title']}**",
-                supports_streaming=True,
-                attributes=[
-                    DocumentAttributeVideo(
-                        duration=int(video_info['duration']),
-                        w=video_info['width'],
-                        h=video_info['height'],
-                        supports_streaming=True
+            except Exception as e:
+                error_msg = str(e)
+                print(f"❌ Error (attempt {attempt + 1}): {error_msg}")
+                
+                # Check if this is a rate limiting / extraction error
+                if ("Unable to extract webpage video data" in error_msg or 
+                    "rate-limit" in error_msg.lower() or
+                    "ratelimit" in error_msg.lower()):
+                    
+                    if attempt < max_retries:
+                        await status_msg.edit(
+                            f"⚠️ Rate limit detected!\n"
+                            f"🔄 Reconnecting WARP... ({attempt + 1}/{max_retries})"
+                        )
+                        
+                        # Reconnect WARP CLI
+                        if await self._reconnect_warp_async():
+                            await status_msg.edit(f"✅ WARP reconnected!\n📥 Retrying download...")
+                            await asyncio.sleep(2)
+                            continue
+                        else:
+                            await status_msg.edit(f"⚠️ WARP reconnect failed, retrying anyway...")
+                            await asyncio.sleep(1)
+                            continue
+                    else:
+                        await status_msg.edit(
+                            f"❌ Download failed after {max_retries} retries\n"
+                            f"Rate limit issue - try again later"
+                        )
+                        # Clean up
+                        if downloaded_file and os.path.exists(downloaded_file):
+                            try:
+                                os.remove(downloaded_file)
+                            except:
+                                pass
+                        return
+                else:
+                    # Different error, show to user
+                    await status_msg.edit(
+                        f"❌ Error downloading video:\n`{error_msg[:200]}`\n\n"
+                        "Please check the URL and try again."
                     )
-                ]
-            )
-            
-            # Delete status message and downloaded file
-            await status_msg.delete()
-            os.remove(downloaded_file)
-            
-            print(f"✅ Sent video to user {event.chat_id}: {video_info['title']}")
+                    
+                    # Clean up any downloaded file
+                    if downloaded_file and os.path.exists(downloaded_file):
+                        try:
+                            os.remove(downloaded_file)
+                        except:
+                            pass
+                    return
+    
+    async def _reconnect_warp_async(self) -> bool:
+        """
+        Reconnect WARP CLI asynchronously to get a new IP
         
-        except Exception as e:
-            error_msg = str(e)
-            print(f"❌ Error: {error_msg}")
-            await status_msg.edit(
-                f"❌ Error downloading video:\n`{error_msg[:200]}`\n\n"
-                "Please check the URL and try again."
+        Returns:
+            True if reconnection was successful, False otherwise
+        """
+        import subprocess
+        
+        try:
+            # Disconnect WARP
+            print("   └─ Disconnecting WARP...")
+            process = await asyncio.create_subprocess_exec(
+                'warp-cli', 'disconnect',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
+            await asyncio.wait_for(process.wait(), timeout=10)
             
-            # Clean up any downloaded file
-            if downloaded_file and os.path.exists(downloaded_file):
-                try:
-                    os.remove(downloaded_file)
-                except:
-                    pass
+            # Wait a moment
+            await asyncio.sleep(1)
+            
+            # Connect WARP
+            print("   └─ Connecting WARP...")
+            process = await asyncio.create_subprocess_exec(
+                'warp-cli', 'connect',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            returncode = await asyncio.wait_for(process.wait(), timeout=10)
+            
+            if returncode == 0:
+                print("   └─ ✅ WARP reconnected successfully")
+                await asyncio.sleep(2)  # Wait for connection to stabilize
+                return True
+            else:
+                print(f"   └─ ❌ Connect failed with code {returncode}")
+                return False
+                
+        except FileNotFoundError:
+            print("   └─ ⚠️  warp-cli not found in PATH")
+            return False
+        except asyncio.TimeoutError:
+            print("   └─ ⚠️  WARP command timed out")
+            return False
+        except Exception as e:
+            print(f"   └─ ⚠️  WARP reconnect error: {e}")
+            return False
     
     async def start(self):
         """Start the bot"""
