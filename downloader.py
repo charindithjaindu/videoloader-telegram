@@ -78,25 +78,20 @@ class VideoDownloader:
             except Exception as e:
                 error_msg = str(e)
                 
-                # Check if this is a rate limiting / extraction error
-                if "Unable to extract webpage video data" in error_msg or "rate-limit" in error_msg.lower():
-                    if attempt < max_retries:
-                        print(f"⚠️  Rate limiting detected: {error_msg[:100]}...")
-                        print(f"🔄 Attempting to reconnect WARP CLI...")
-                        
-                        # Reconnect WARP CLI
-                        if self._reconnect_warp():
-                            print(f"✅ WARP reconnected, retrying download...")
-                            continue
-                        else:
-                            print(f"❌ Failed to reconnect WARP, retrying anyway...")
-                            continue
+                # For ANY yt-dlp error, try WARP reconnection
+                if attempt < max_retries:
+                    print(f"⚠️  Download error: {error_msg[:100]}...")
+                    print(f"🔄 Attempting to reconnect WARP CLI and retry...")
+                    
+                    # Reconnect WARP CLI
+                    if self._reconnect_warp():
+                        print(f"✅ WARP reconnected, retrying download...")
+                        continue
                     else:
-                        print(f"❌ Download failed after {max_retries} retries: {error_msg}")
-                        return False
+                        print(f"⚠️  WARP reconnect failed, retrying anyway...")
+                        continue
                 else:
-                    # Different error, don't retry
-                    print(f"❌ Download failed: {error_msg}")
+                    print(f"❌ Download failed after {max_retries} retries: {error_msg}")
                     return False
         
         return False

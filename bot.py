@@ -233,46 +233,29 @@ And I'll download and send it back to you!
                 error_msg = str(e)
                 print(f"❌ Error (attempt {attempt + 1}): {error_msg}")
                 
-                # Check if this is a rate limiting / extraction error
-                if ("Unable to extract webpage video data" in error_msg or 
-                    "rate-limit" in error_msg.lower() or
-                    "ratelimit" in error_msg.lower()):
-                    
-                    if attempt < max_retries:
-                        await status_msg.edit(
-                            f"⚠️ Rate limit detected!\n"
-                            f"🔄 Reconnecting WARP... ({attempt + 1}/{max_retries})"
-                        )
-                        
-                        # Reconnect WARP CLI
-                        if await self._reconnect_warp_async():
-                            await status_msg.edit(f"✅ WARP reconnected!\n📥 Retrying download...")
-                            await asyncio.sleep(2)
-                            continue
-                        else:
-                            await status_msg.edit(f"⚠️ WARP reconnect failed, retrying anyway...")
-                            await asyncio.sleep(1)
-                            continue
-                    else:
-                        await status_msg.edit(
-                            f"❌ Download failed after {max_retries} retries\n"
-                            f"Rate limit issue - try again later"
-                        )
-                        # Clean up
-                        if downloaded_file and os.path.exists(downloaded_file):
-                            try:
-                                os.remove(downloaded_file)
-                            except:
-                                pass
-                        return
-                else:
-                    # Different error, show to user
+                # For ANY error, try WARP reconnection and retry
+                if attempt < max_retries:
                     await status_msg.edit(
-                        f"❌ Error downloading video:\n`{error_msg[:200]}`\n\n"
-                        "Please check the URL and try again."
+                        f"⚠️ Download error!\n"
+                        f"🔄 Reconnecting WARP... ({attempt + 1}/{max_retries})"
                     )
                     
-                    # Clean up any downloaded file
+                    # Reconnect WARP CLI
+                    if await self._reconnect_warp_async():
+                        await status_msg.edit(f"✅ WARP reconnected!\n📥 Retrying download...")
+                        await asyncio.sleep(2)
+                        continue
+                    else:
+                        await status_msg.edit(f"⚠️ WARP reconnect failed, retrying anyway...")
+                        await asyncio.sleep(1)
+                        continue
+                else:
+                    # Max retries reached
+                    await status_msg.edit(
+                        f"❌ Download failed after {max_retries} retries\n"
+                        f"Error: `{error_msg[:150]}`"
+                    )
+                    # Clean up
                     if downloaded_file and os.path.exists(downloaded_file):
                         try:
                             os.remove(downloaded_file)
