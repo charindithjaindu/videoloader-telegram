@@ -139,8 +139,6 @@ And I'll download and send it back to you!
             # Start with default options from config
             ydl_opts = DEFAULT_YT_DLP_OPTIONS.copy()
             ydl_opts['outtmpl'] = temp_file
-            ydl_opts['quiet'] = True
-            ydl_opts['no_warnings'] = True
             
             # Add cookies if available for this platform (same logic as downloader.py)
             if platform and platform['cookies_file']:
