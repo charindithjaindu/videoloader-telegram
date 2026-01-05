@@ -2,11 +2,25 @@
 Configuration for different video platforms
 """
 import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Base directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 COOKIES_DIR = os.path.join(BASE_DIR, 'cookies')
 DOWNLOADS_DIR = os.path.join(BASE_DIR, 'downloads')
+
+# Proxy configuration
+PROXY_HOST = os.getenv('PROXY_HOST', '')
+PROXY_PORT = os.getenv('PROXY_PORT', '')
+PROXY_TYPE = os.getenv('PROXY_TYPE', 'socks5')
+
+# Build proxy URL if configured
+PROXY_URL = None
+if PROXY_HOST and PROXY_PORT:
+    PROXY_URL = f"{PROXY_TYPE}://{PROXY_HOST}:{PROXY_PORT}"
 
 # Platform configurations
 PLATFORMS = {
@@ -44,6 +58,11 @@ DEFAULT_YT_DLP_OPTIONS = {
     'no_warnings': False,
     'extract_flat': False,
 }
+
+# Add proxy if configured
+if PROXY_URL:
+    DEFAULT_YT_DLP_OPTIONS['proxy'] = PROXY_URL
+    print(f"🔒 Using proxy: {PROXY_URL}")
 
 
 def get_platform_for_url(url: str) -> dict | None:

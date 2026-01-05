@@ -71,6 +71,52 @@ python main.py --platforms
 - `/help` - Show help
 - `/platforms` - List supported platforms
 
+## 🔒 Proxy Configuration (Optional)
+
+You can configure a proxy for downloading videos. This is useful for bypassing geographic restrictions or rate limits.
+
+### Setup Proxy
+
+1. **Edit your `.env` file** and add:
+   ```bash
+   PROXY_HOST=localhost
+   PROXY_PORT=40000
+   PROXY_TYPE=socks5  # or 'http'
+   ```
+
+2. **Supported proxy types:**
+   - `socks5` - SOCKS5 proxy (recommended)
+   - `http` - HTTP/HTTPS proxy
+
+3. **To disable proxy:**
+   - Leave `PROXY_HOST` or `PROXY_PORT` empty in `.env`
+   - Or remove these lines entirely
+
+### Example Configurations
+
+**SOCKS5 Proxy (Local):**
+```bash
+PROXY_HOST=localhost
+PROXY_PORT=40000
+PROXY_TYPE=socks5
+```
+
+**HTTP Proxy (Remote):**
+```bash
+PROXY_HOST=proxy.example.com
+PROXY_PORT=8080
+PROXY_TYPE=http
+```
+
+**No Proxy (Default):**
+```bash
+# Leave empty or comment out
+# PROXY_HOST=
+# PROXY_PORT=
+```
+
+The proxy will be used for all downloads in both the CLI (`main.py`) and the Telegram bot (`bot.py`).
+
 ## 🍪 Adding Cookies for New Platforms
 
 ### For Instagram:
