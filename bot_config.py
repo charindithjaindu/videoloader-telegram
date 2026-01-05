@@ -26,7 +26,7 @@ if PROXY_HOST and PROXY_PORT:
 
 # Bot settings
 BOT_NAME = "Video Downloader Bot"
-MAX_FILE_SIZE = 2000 * 1024 * 1024  # 50 MB (Telegram limit for bots is 50MB)
+MAX_FILE_SIZE = 2000 * 1024 * 1024  # 2000 MB (Increased from default 50MB Telegram limit)
 
 # Session file
 SESSION_NAME = 'bot_session'

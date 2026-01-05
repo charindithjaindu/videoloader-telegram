@@ -52,11 +52,17 @@ PLATFORMS = {
 
 # yt-dlp default options
 DEFAULT_YT_DLP_OPTIONS = {
-    'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    # Updated format to fix Instagram audio issues
+    # Priority: best mp4 with audio > merge best video+audio > fallback to best
+    'format': 'best[ext=mp4]/bestvideo*+bestaudio*/best',
     'outtmpl': os.path.join(DOWNLOADS_DIR, '%(title)s.%(ext)s'),
     'quiet': False,
     'no_warnings': False,
     'extract_flat': False,
+    # Ensure audio is merged properly
+    'merge_output_format': 'mp4',
+    # Prefer formats with audio
+    'prefer_free_formats': False,
 }
 
 # Add proxy if configured
