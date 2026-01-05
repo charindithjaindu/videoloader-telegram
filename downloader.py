@@ -123,7 +123,7 @@ class VideoDownloader:
             
             # Wait a moment
             import time
-            time.sleep(1)
+            time.sleep(5)
             
             # Connect WARP
             print("   └─ Connecting WARP...")
@@ -134,7 +134,7 @@ class VideoDownloader:
             
             if result.returncode == 0:
                 print("   └─ ✅ WARP reconnected successfully")
-                time.sleep(2)  # Wait for connection to stabilize
+                time.sleep(5)  # Wait for connection to stabilize
                 return True
             else:
                 print(f"   └─ ❌ Connect failed with code {result.returncode}")
