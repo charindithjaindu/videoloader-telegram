@@ -10,7 +10,7 @@ from telethon.tl.types import DocumentAttributeVideo
 import yt_dlp
 
 from bot_config import API_ID, API_HASH, BOT_TOKEN, SESSION_NAME, MAX_FILE_SIZE
-from config import get_platform_for_url, ensure_directories, DOWNLOADS_DIR
+from config import get_platform_for_url, ensure_directories, DOWNLOADS_DIR, DEFAULT_YT_DLP_OPTIONS
 
 
 class VideoDownloaderBot:
@@ -114,32 +114,55 @@ And I'll download and send it back to you!
         # Send initial processing message
         status_msg = await event.respond("🔍 Processing your link...")
         
+        downloaded_file = None
+        
         try:
             # Detect platform
             platform = get_platform_for_url(url)
             
             if platform:
                 await status_msg.edit(f"🎯 Detected: {platform['name']}\n📥 Downloading...")
+                
+                # Check if platform is enabled
+                if not platform['enabled']:
+                    await status_msg.edit(
+                        f"⚠️ {platform['name']} support is not enabled yet.\n"
+                        f"Please add cookies to: cookies/{platform['key']}.txt"
+                    )
+                    return
             else:
                 await status_msg.edit("📥 Downloading video...")
             
-            # Prepare download options
+            # Prepare download options using the same config as main.py
             temp_file = os.path.join(DOWNLOADS_DIR, f'temp_{event.chat_id}_%(title)s.%(ext)s')
             
-            ydl_opts = {
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-                'outtmpl': temp_file,
-                'quiet': True,
-                'no_warnings': True,
-            }
+            # Start with default options from config
+            ydl_opts = DEFAULT_YT_DLP_OPTIONS.copy()
+            ydl_opts['outtmpl'] = temp_file
+            ydl_opts['quiet'] = True
+            ydl_opts['no_warnings'] = True
             
-            # Add cookies if available
-            if platform and platform['cookies_file'] and os.path.exists(platform['cookies_file']):
-                ydl_opts['cookiefile'] = platform['cookies_file']
+            # Add cookies if available for this platform (same logic as downloader.py)
+            if platform and platform['cookies_file']:
+                cookies_file = platform['cookies_file']
+                if os.path.exists(cookies_file):
+                    ydl_opts['cookiefile'] = cookies_file
+                    print(f"🍪 Using cookies from: {cookies_file}")
+                else:
+                    print(f"⚠️  Cookies file not found: {cookies_file}")
+                    await status_msg.edit(
+                        f"⚠️  Cookies file not found for {platform['name']}\n"
+                        f"Expected at: {cookies_file}\n"
+                        "Download may fail for private content."
+                    )
+                    await asyncio.sleep(2)
+                    await status_msg.edit("📥 Attempting download anyway...")
             
             # Download the video
-            downloaded_file = None
             video_info = None
+            
+            print(f"📥 Downloading from: {url}")
+            print(f"🔧 yt-dlp options: {ydl_opts}")
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
