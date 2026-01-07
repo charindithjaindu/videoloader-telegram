@@ -9,7 +9,7 @@ from telethon import TelegramClient, events
 from telethon.tl.types import DocumentAttributeVideo
 import yt_dlp
 
-from bot_config import API_ID, API_HASH, BOT_TOKEN, SESSION_NAME, MAX_FILE_SIZE
+from bot_config import API_ID, API_HASH, BOT_TOKEN, SESSION_NAME, MAX_FILE_SIZE, LOGGER_CHANNEL_ID, ADMINS
 from config import get_platform_for_url, ensure_directories, DOWNLOADS_DIR, DEFAULT_YT_DLP_OPTIONS
 
 
@@ -207,7 +207,7 @@ And I'll download and send it back to you!
                 )
                 
                 # Send the video
-                await self.client.send_file(
+                sent_message = await self.client.send_file(
                     event.chat_id,
                     downloaded_file,
                     caption=f"🎬 **{video_info['title']}**",
@@ -221,6 +221,9 @@ And I'll download and send it back to you!
                         )
                     ]
                 )
+                
+                # Forward to logger channel if configured and user is not admin
+                await self._log_download_to_channel(event, url, video_info, downloaded_file)
                 
                 # Delete status message and downloaded file
                 await status_msg.delete()
@@ -262,6 +265,78 @@ And I'll download and send it back to you!
                         except:
                             pass
                     return
+    
+    async def _log_download_to_channel(self, event, url, video_info, video_path):
+        """
+        Forward download to logger channel with user details
+        
+        Args:
+            event: The message event
+            url: Original video URL
+            video_info: Video metadata dict
+            video_path: Path to downloaded video file
+        """
+        # Skip if logger channel not configured
+        if not LOGGER_CHANNEL_ID:
+            return
+        
+        # Skip if user is admin
+        user_id = event.sender_id
+        if user_id in ADMINS:
+            print(f"👑 Skipping log for admin user: {user_id}")
+            return
+        
+        try:
+            # Get user information
+            sender = await event.get_sender()
+            
+            # Build user info string
+            user_mention = f"[{sender.first_name or 'User'}](tg://user?id={user_id})"
+            if sender.username:
+                user_info = f"@{sender.username}"
+            else:
+                user_info = f"ID: `{user_id}`"
+            
+            if sender.last_name:
+                full_name = f"{sender.first_name} {sender.last_name}"
+            else:
+                full_name = sender.first_name or "Unknown"
+            
+            # Create enhanced caption with user details
+            log_caption = f"""📥 **Download Log**
+
+👤 **User:** {user_mention}
+🆔 **User ID:** `{user_id}`
+📛 **Name:** {full_name}
+{f'🔗 **Username:** @{sender.username}' if sender.username else ''}
+
+🎬 **Video:** {video_info['title']}
+🔗 **URL:** `{url}`
+⏱️ **Duration:** {video_info['duration']}s
+📐 **Resolution:** {video_info['width']}x{video_info['height']}
+"""
+            
+            # Send to logger channel
+            await self.client.send_file(
+                LOGGER_CHANNEL_ID,
+                video_path,
+                caption=log_caption,
+                supports_streaming=True,
+                attributes=[
+                    DocumentAttributeVideo(
+                        duration=int(video_info['duration']),
+                        w=video_info['width'],
+                        h=video_info['height'],
+                        supports_streaming=True
+                    )
+                ]
+            )
+            
+            print(f"📋 Logged download for user {user_id} to channel {LOGGER_CHANNEL_ID}")
+            
+        except Exception as e:
+            print(f"⚠️  Failed to log to channel: {e}")
+            # Don't fail the main operation if logging fails
     
     async def _reconnect_warp_async(self) -> bool:
         """

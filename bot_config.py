@@ -30,3 +30,27 @@ MAX_FILE_SIZE = 2000 * 1024 * 1024  # 2000 MB (Increased from default 50MB Teleg
 
 # Session file
 SESSION_NAME = 'bot_session'
+
+# Logger channel (for forwarding downloads, except admins)
+LOGGER_CHANNEL_ID = os.getenv('LOGGER_CHANNEL_ID', '')
+if LOGGER_CHANNEL_ID:
+    try:
+        LOGGER_CHANNEL_ID = int(LOGGER_CHANNEL_ID)
+        print(f"📋 Logger channel configured: {LOGGER_CHANNEL_ID}")
+    except ValueError:
+        print("⚠️  Invalid LOGGER_CHANNEL_ID format, logging disabled")
+        LOGGER_CHANNEL_ID = None
+else:
+    LOGGER_CHANNEL_ID = None
+
+# Admin user IDs (won't be logged)
+ADMINS = os.getenv('ADMINS', '')
+if ADMINS:
+    try:
+        ADMINS = [int(admin_id.strip()) for admin_id in ADMINS.split(',') if admin_id.strip()]
+        print(f"👑 Admin users: {ADMINS}")
+    except ValueError:
+        print("⚠️  Invalid ADMINS format, using empty list")
+        ADMINS = []
+else:
+    ADMINS = []
