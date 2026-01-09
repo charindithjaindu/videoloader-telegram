@@ -44,7 +44,7 @@ PLATFORMS = {
     },
     'youtube': {
         'name': 'YouTube',
-        'cookies_file': None,  # YouTube usually doesn't need cookies for public videos
+        'cookies_file': os.path.join(COOKIES_DIR, 'youtube.txt'),  # YouTube usually doesn't need cookies for public videos
         'enabled': True,
         'domains': ['youtube.com', 'youtu.be']
     }
