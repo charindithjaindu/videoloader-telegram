@@ -90,7 +90,10 @@ job gives yt-dlp a temporary copy, so the files on disk are never rewritten.
 ## Commands
 
 - `/start`: short help
-- send any link → pick 🎬 1080p/720p/480p/360p/Best or 🎵 MP3/M4A
+- send any link → downloaded right away in your default format (🎬 **Best** unless changed)
+- `/settings`: set the default format (🎬 Best/1080p/720p/480p/360p, 🎵 MP3/M4A) or
+  ❓ *Ask every time* to get the format buttons for each link. Stored per user in
+  `users.default_format`.
 - `/stats` (admins in `ADMINS` only): queue depth, active downloads, cache hit rate, jobs and
   errors in the last 24h
 

@@ -33,19 +33,23 @@ class CachedFile:
     height: int | None
 
 
-async def upsert_user(pool: asyncpg.Pool, user) -> bool:
-    """Returns True if the user is banned."""
-    return await pool.fetchval(
+async def upsert_user(pool: asyncpg.Pool, user) -> asyncpg.Record:
+    """Returns the user's (is_banned, default_format)."""
+    return await pool.fetchrow(
         """
         INSERT INTO users (id, username, first_name, language_code)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (id) DO UPDATE SET
             username = EXCLUDED.username, first_name = EXCLUDED.first_name,
             language_code = EXCLUDED.language_code, last_seen_at = now()
-        RETURNING is_banned
+        RETURNING is_banned, default_format
         """,
         user.id, user.username, user.first_name, user.language_code,
     )
+
+
+async def set_default_format(pool: asyncpg.Pool, user_id: int, fmt: str) -> None:
+    await pool.execute("UPDATE users SET default_format = $2 WHERE id = $1", user_id, fmt)
 
 
 async def get_cached(pool: asyncpg.Pool, key: str) -> CachedFile | None:

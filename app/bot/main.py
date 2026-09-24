@@ -27,7 +27,10 @@ async def on_startup(dispatcher: Dispatcher, bot, settings) -> None:
         allowed_updates=dispatcher.resolve_used_update_types(),
         max_connections=100,
     )
-    await bot.set_my_commands([BotCommand(command="start", description="How to use the bot")])
+    await bot.set_my_commands([
+        BotCommand(command="start", description="How to use the bot"),
+        BotCommand(command="settings", description="Change the default quality"),
+    ])
     log.info("webhook set to %s via %s", settings.webhook_url, settings.telegram_api_base)
 
 

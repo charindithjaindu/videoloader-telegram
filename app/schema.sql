@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS users (
     last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Preset code used when the user sends a link (see /settings); 'ask' shows the buttons.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS default_format TEXT NOT NULL DEFAULT 'vbest';
+
 -- One row per (normalized_url, format): the Telegram file we already uploaded.
 CREATE TABLE IF NOT EXISTS file_cache (
     cache_key      TEXT PRIMARY KEY,

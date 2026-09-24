@@ -7,16 +7,16 @@ import logging
 import uuid
 
 import asyncpg
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, User
 from arq import ArqRedis
 from redis.asyncio import Redis
 
 from app import db, state
 from app.config import Settings
-from app.formats import PRESETS, cache_key
+from app.formats import PRESETS, Preset, cache_key
 from app.media import send_cached
 from app.urls import detect_platform, extract_url, normalize_url
 
@@ -25,19 +25,26 @@ router = Router()
 router.message.filter(F.chat.type == "private")
 router.callback_query.filter(F.message.chat.type == "private")
 
+ASK = "ask"  # default_format value: show the format buttons for every link
+
 START_TEXT = (
     "👋 Send me a link from YouTube, TikTok, Instagram, X/Twitter, Facebook, Reddit "
     "and many more sites.\n\n"
-    "I'll ask for the format (video quality or audio) and send you the file. "
-    "Files up to 2 GB."
+    "I'll download it in the best quality and send you the file. Files up to 2 GB.\n"
+    "Use /settings to change the default quality or pick audio instead."
 )
+
+
+def _preset_text(code: str) -> str:
+    if code == ASK:
+        return "❓ Ask every time"
+    p = PRESETS[code]
+    return f"{'🎬' if p.kind == 'video' else '🎵'} {p.label}"
 
 
 def formats_keyboard(token: str) -> InlineKeyboardMarkup:
     def btn(code: str) -> InlineKeyboardButton:
-        p = PRESETS[code]
-        icon = "🎬" if p.kind == "video" else "🎵"
-        return InlineKeyboardButton(text=f"{icon} {p.label}", callback_data=f"dl:{token}:{code}")
+        return InlineKeyboardButton(text=_preset_text(code), callback_data=f"dl:{token}:{code}")
 
     return InlineKeyboardMarkup(inline_keyboard=[
         [btn("v1080"), btn("v720"), btn("v480")],
@@ -46,10 +53,53 @@ def formats_keyboard(token: str) -> InlineKeyboardMarkup:
     ])
 
 
+def settings_keyboard(current: str) -> InlineKeyboardMarkup:
+    def btn(code: str) -> InlineKeyboardButton:
+        mark = "✅ " if code == current else ""
+        return InlineKeyboardButton(text=mark + _preset_text(code), callback_data=f"set:{code}")
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [btn("vbest"), btn("v1080"), btn("v720")],
+        [btn("v480"), btn("v360")],
+        [btn("a_mp3"), btn("a_m4a")],
+        [btn(ASK)],
+    ])
+
+
+def settings_text(current: str) -> str:
+    return (
+        "<b>⚙️ Settings</b>\n"
+        f"Default format: {_preset_text(current)}\n\n"
+        "Links you send are downloaded in this format. Choose another:"
+    )
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, pool: asyncpg.Pool) -> None:
     await db.upsert_user(pool, message.from_user)
     await message.answer(START_TEXT)
+
+
+@router.message(Command("settings"))
+async def cmd_settings(message: Message, pool: asyncpg.Pool) -> None:
+    user = await db.upsert_user(pool, message.from_user)
+    fmt = user["default_format"]
+    await message.answer(settings_text(fmt), reply_markup=settings_keyboard(fmt))
+
+
+@router.callback_query(F.data.startswith("set:"))
+async def on_setting(cb: CallbackQuery, pool: asyncpg.Pool) -> None:
+    code = cb.data.removeprefix("set:")
+    if code != ASK and code not in PRESETS:
+        await cb.answer("Unknown option", show_alert=True)
+        return
+    await db.upsert_user(pool, cb.from_user)
+    await db.set_default_format(pool, cb.from_user.id, code)
+    await cb.answer(f"Default: {_preset_text(code)}")
+    try:
+        await cb.message.edit_text(settings_text(code), reply_markup=settings_keyboard(code))
+    except TelegramBadRequest:
+        pass  # "message is not modified"
 
 
 @router.message(Command("stats"))
@@ -75,7 +125,9 @@ async def cmd_stats(message: Message, pool: asyncpg.Pool, redis: Redis, settings
 
 
 @router.message(F.text | F.caption)
-async def on_link(message: Message, pool: asyncpg.Pool, redis: Redis, settings: Settings) -> None:
+async def on_link(
+    message: Message, pool: asyncpg.Pool, redis: Redis, arq: ArqRedis, settings: Settings
+) -> None:
     url = extract_url(message.text or message.caption)
     if not url:
         await message.answer("Send me a link (http:// or https://).")
@@ -83,11 +135,24 @@ async def on_link(message: Message, pool: asyncpg.Pool, redis: Redis, settings: 
     if await state.hit_flood_limit(redis, message.from_user.id, settings.links_per_minute):
         await message.answer("⏳ Too many links. Wait a minute and try again.")
         return
-    token = await state.save_link(redis, url)
+    user = await db.upsert_user(pool, message.from_user)
+    if user["is_banned"]:
+        await message.answer("You are banned.")
+        return
+
     platform = detect_platform(url)
     head = f"🔗 {platform.capitalize()} link" if platform else "🔗 Link"
-    await message.answer(f"{head}. Choose a format:", reply_markup=formats_keyboard(token),
-                         disable_web_page_preview=True)
+    preset = PRESETS.get(user["default_format"])
+    if preset is None:  # ASK
+        token = await state.save_link(redis, url)
+        await message.answer(f"{head}. Choose a format:", reply_markup=formats_keyboard(token),
+                             disable_web_page_preview=True)
+        return
+
+    status = await message.answer(f"{head}. Starting ({preset.label})…",
+                                  disable_web_page_preview=True)
+    await start_download(message.bot, status, message.from_user, url, preset,
+                         pool, redis, arq, settings)
 
 
 @router.callback_query(F.data.startswith("dl:"))
@@ -106,21 +171,28 @@ async def on_format(
         await cb.answer("This button expired. Send the link again.", show_alert=True)
         return
 
-    user = cb.from_user
-    if await db.upsert_user(pool, user):
+    if (await db.upsert_user(pool, cb.from_user))["is_banned"]:
         await cb.answer("You are banned.", show_alert=True)
         return
 
-    chat_id = cb.message.chat.id
+    await cb.answer()
+    await start_download(cb.bot, cb.message, cb.from_user, url, preset, pool, redis, arq, settings)
+
+
+async def start_download(
+    bot: Bot, status: Message, user: User, url: str, preset: Preset,
+    pool: asyncpg.Pool, redis: Redis, arq: ArqRedis, settings: Settings,
+) -> None:
+    """Send from cache or enqueue a job; `status` is the message the worker keeps editing."""
+    chat_id = status.chat.id
     norm = normalize_url(url)
     key = cache_key(norm, preset.code)
 
     # --- cache hit: resend the stored file_id, no download ---
     cached = await db.get_cached(pool, key)
     if cached:
-        await cb.answer("Sending…")
         try:
-            await send_cached(cb.bot, chat_id, cached)
+            await send_cached(bot, chat_id, cached)
         except TelegramBadRequest:
             # file_id no longer valid (very rare): drop it and fall through to a fresh download
             log.warning("stale file_id for %s, re-downloading", key)
@@ -131,37 +203,40 @@ async def on_format(
                 pool, id=uuid.uuid4().hex, user_id=user.id, chat_id=chat_id, url=url,
                 normalized_url=norm, format=preset.code, cache_key=key, status="cached",
             )
-            await _safe_delete(cb.message)
+            await _safe_delete(status)
             return
-    else:
-        await cb.answer()
 
     # --- cache miss: enqueue for a worker ---
     job_id = uuid.uuid4().hex
     if not await state.acquire_user_slot(redis, user.id, job_id, settings.max_jobs_per_user):
-        await cb.message.answer(
+        await _safe_edit(
+            status,
             f"⏳ You already have {settings.max_jobs_per_user} downloads in progress. "
-            "Wait for one to finish."
+            "Wait for one to finish, then send the link again.",
         )
         return
     try:
         await state.incr_stat(redis, "cache_miss")
         await db.create_job(
             pool, id=job_id, user_id=user.id, chat_id=chat_id,
-            status_message_id=cb.message.message_id, url=url, normalized_url=norm,
+            status_message_id=status.message_id, url=url, normalized_url=norm,
             format=preset.code, cache_key=key, status="queued",
         )
         position = await state.mark_waiting(redis, job_id)
         # Edit before enqueueing so this can never overwrite the worker's later status.
-        try:
-            await cb.message.edit_text(f"🕒 Queued ({preset.label}). Position in queue: #{position}")
-        except TelegramAPIError:
-            pass
+        await _safe_edit(status, f"🕒 Queued ({preset.label}). Position in queue: #{position}")
         await arq.enqueue_job("process_job", job_id, _job_id=job_id)
     except Exception:
         await state.release_user_slot(redis, user.id, job_id)
         await state.unmark_waiting(redis, job_id)
         raise
+
+
+async def _safe_edit(message: Message, text: str) -> None:
+    try:
+        await message.edit_text(text, disable_web_page_preview=True)
+    except TelegramAPIError:
+        pass
 
 
 async def _safe_delete(message: Message) -> None:
