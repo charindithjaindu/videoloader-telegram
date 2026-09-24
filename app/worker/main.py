@@ -39,6 +39,15 @@ async def edit_status(bot: Bot, chat_id: int, message_id: int | None, text: str)
         pass  # "message is not modified" / deleted by user
 
 
+async def delete_status(bot: Bot, chat_id: int, message_id: int | None) -> None:
+    if not message_id:
+        return
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except TelegramBadRequest:
+        pass  # already deleted
+
+
 def _mb(n: float) -> str:
     return f"{n / 1024 / 1024:.1f} MB"
 
@@ -91,7 +100,7 @@ async def process_job(ctx: dict, job_id: str) -> str:
             else:
                 await deliver_fresh(ctx, job, preset, workdir)
         await db.set_job_status(pool, job_id, "done")
-        await edit_status(bot, chat_id, msg_id, "✅ Done")
+        await delete_status(bot, chat_id, msg_id)  # the file itself is the result
         return "done"
     except Exception as e:  # noqa: BLE001 - every failure becomes a plain message
         code = classify(e)

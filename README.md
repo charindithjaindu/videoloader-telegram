@@ -97,7 +97,8 @@ job gives yt-dlp a temporary copy, so the files on disk are never rewritten.
 - `/stats` (admins in `ADMINS` only): queue depth, active downloads, cache hit rate, jobs and
   errors in the last 24h
 
-Status flow: `🕒 Queued (#N)` → `⬇️ Downloading 45% …` → `📤 Uploading` → `✅ Done`.
+Status flow: `🕒 Queued (#N)` → `⬇️ Downloading 45% …` → `📤 Uploading`, then the status
+message is deleted so only the file stays.
 Failures show one short line: private video, expired/removed link, file too big, source
 blocked, unsupported link, and so on. Users never see a stack trace.
 
