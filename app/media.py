@@ -2,7 +2,7 @@
 from html import escape
 
 from aiogram import Bot
-from aiogram.types import Message
+from aiogram.types import Message, ReplyParameters
 
 from app.db import CachedFile
 
@@ -16,26 +16,30 @@ async def send_media(
     title: str | None = None, duration: int | None = None,
     width: int | None = None, height: int | None = None,
     caption: str | None = None, request_timeout: int | None = None,
+    reply_to: int | None = None,
 ) -> Message:
     """`file` is either a Telegram file_id or a file:///abs/path on the shared volume."""
     caption = caption or caption_for(title)
+    # Still send if the user deleted the message we reply to.
+    reply = ReplyParameters(message_id=reply_to, allow_sending_without_reply=True) if reply_to else None
     if media_type == "video":
         return await bot.send_video(
             chat_id, file, caption=caption, duration=duration, width=width, height=height,
-            supports_streaming=True, request_timeout=request_timeout,
+            supports_streaming=True, request_timeout=request_timeout, reply_parameters=reply,
         )
     if media_type == "audio":
         return await bot.send_audio(
             chat_id, file, caption=caption, duration=duration, title=title,
-            request_timeout=request_timeout,
+            request_timeout=request_timeout, reply_parameters=reply,
         )
-    return await bot.send_document(chat_id, file, caption=caption, request_timeout=request_timeout)
+    return await bot.send_document(chat_id, file, caption=caption, request_timeout=request_timeout,
+                                   reply_parameters=reply)
 
 
-async def send_cached(bot: Bot, chat_id: int, f: CachedFile) -> Message:
+async def send_cached(bot: Bot, chat_id: int, f: CachedFile, reply_to: int | None = None) -> Message:
     return await send_media(
         bot, chat_id, f.media_type, f.file_id,
-        title=f.title, duration=f.duration, width=f.width, height=f.height,
+        title=f.title, duration=f.duration, width=f.width, height=f.height, reply_to=reply_to,
     )
 
 

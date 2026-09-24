@@ -101,6 +101,7 @@ job gives yt-dlp a temporary copy, so the files on disk are never rewritten.
 `MAX_JOBS_PER_USER`) and aren't copied to the logger channel. The global
 `DOWNLOAD_CONCURRENCY` cap and Telegram's own send limits still apply.
 
+The status message and the file are sent as replies to the user's link.
 Status flow: `🕒 Queued (#N)` → `⬇️ Downloading 45% …` → `📤 Uploading`, then the status
 message is deleted so only the file stays.
 Failures show one short line: private video, expired/removed link, file too big, source

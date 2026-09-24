@@ -95,7 +95,7 @@ async def process_job(ctx: dict, job_id: str) -> str:
         async with state.inflight_lock(redis, key, timeout=s.job_timeout):
             cached = await db.get_cached(pool, key)
             if cached:
-                await send_cached(bot, chat_id, cached)
+                await send_cached(bot, chat_id, cached, reply_to=job["reply_to_message_id"])
                 await state.incr_stat(redis, "cache_hit_worker")
             else:
                 await deliver_fresh(ctx, job, preset, workdir)
@@ -145,7 +145,7 @@ async def deliver_fresh(ctx: dict, job, preset, workdir) -> None:
             bot, chat_id, result.media_type, result.path.as_uri(),
             title=result.title, duration=result.duration,
             width=result.width, height=result.height,
-            request_timeout=s.upload_timeout,
+            request_timeout=s.upload_timeout, reply_to=job["reply_to_message_id"],
         )
     except TelegramEntityTooLarge:
         raise JobError("too_big") from None

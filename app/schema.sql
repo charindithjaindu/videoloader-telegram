@@ -47,5 +47,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at       TIMESTAMPTZ
 );
 
+-- The user's link message; status and file are sent as replies to it.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS reply_to_message_id BIGINT;
+
 CREATE INDEX IF NOT EXISTS jobs_user_idx ON jobs (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS jobs_created_idx ON jobs (created_at DESC);

@@ -147,12 +147,12 @@ async def on_link(
     preset = PRESETS.get(user["default_format"])
     if preset is None:  # ASK
         token = await state.save_link(redis, url)
-        await message.answer(f"{head}. Choose a format:", reply_markup=formats_keyboard(token),
-                             disable_web_page_preview=True)
+        await message.reply(f"{head}. Choose a format:", reply_markup=formats_keyboard(token),
+                            disable_web_page_preview=True)
         return
 
-    status = await message.answer(f"{head}. Starting ({preset.label})…",
-                                  disable_web_page_preview=True)
+    status = await message.reply(f"{head}. Starting ({preset.label})…",
+                                 disable_web_page_preview=True)
     await start_download(message.bot, status, message.from_user, url, preset,
                          pool, redis, arq, settings)
 
@@ -185,8 +185,12 @@ async def start_download(
     bot: Bot, status: Message, user: User, url: str, preset: Preset,
     pool: asyncpg.Pool, redis: Redis, arq: ArqRedis, settings: Settings,
 ) -> None:
-    """Send from cache or enqueue a job; `status` is the message the worker keeps editing."""
+    """Send from cache or enqueue a job; `status` is the message the worker keeps editing.
+
+    `status` is a reply to the user's link, so the file is sent as a reply to it too.
+    """
     chat_id = status.chat.id
+    reply_to = status.reply_to_message.message_id if status.reply_to_message else None
     norm = normalize_url(url)
     key = cache_key(norm, preset.code)
 
@@ -194,7 +198,7 @@ async def start_download(
     cached = await db.get_cached(pool, key)
     if cached:
         try:
-            await send_cached(bot, chat_id, cached)
+            await send_cached(bot, chat_id, cached, reply_to=reply_to)
         except TelegramBadRequest:
             # file_id no longer valid (very rare): drop it and fall through to a fresh download
             log.warning("stale file_id for %s, re-downloading", key)
@@ -224,7 +228,8 @@ async def start_download(
         await state.incr_stat(redis, "cache_miss")
         await db.create_job(
             pool, id=job_id, user_id=user.id, chat_id=chat_id,
-            status_message_id=status.message_id, url=url, normalized_url=norm,
+            status_message_id=status.message_id, reply_to_message_id=reply_to,
+            url=url, normalized_url=norm,
             format=preset.code, cache_key=key, status="queued",
         )
         position = await state.mark_waiting(redis, job_id)
