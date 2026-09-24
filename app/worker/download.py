@@ -1,4 +1,6 @@
 """yt-dlp wrapper. Blocking: always run it via asyncio.to_thread from the worker."""
+import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -67,13 +69,16 @@ def download(url: str, preset: Preset, workdir: Path, settings: Settings, progre
         "postprocessor_hooks": [on_postprocess],
         **preset.ytdlp,
     }
-    if cookiefile := _cookiefile(settings, url):
-        opts["cookiefile"] = cookiefile
     if settings.proxy_url:
         opts["proxy"] = settings.proxy_url
 
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
+    # yt-dlp writes the cookie jar back on close and ./cookies is mounted read-only,
+    # so hand it a throwaway copy (kept out of workdir so it's never taken for the media).
+    with tempfile.TemporaryDirectory() as tmp:
+        if cookiefile := _cookiefile(settings, url):
+            opts["cookiefile"] = shutil.copy(cookiefile, Path(tmp) / "cookies.txt")
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
 
     if info and info.get("entries"):
         info = next((e for e in info["entries"] if e), {})

@@ -64,7 +64,28 @@ The `downloads` volume is mounted at the same absolute path (`/data/downloads`) 
 and in `telegram-bot-api`. That's what makes `file://` uploads work.
 
 Cookies for sites that need a login go in `./cookies/<platform>.txt` (`youtube`, `tiktok`,
-`instagram`, `twitter`, `facebook`, …). They're mounted read-only into the workers.
+`instagram`, `twitter`, `facebook`, …). They're mounted read-only into the workers; each
+job gives yt-dlp a temporary copy, so the files on disk are never rewritten.
+
+### Server notes
+
+- **Docker permissions**: if your user isn't in the `docker` group, prefix every compose
+  command with `sudo`.
+- **Host-only proxy (WARP)**: a proxy that listens on the host's `127.0.0.1` (such as
+  Cloudflare WARP in proxy mode) can't be reached from containers. Copy
+  `docker-compose.override.example.yml` to `docker-compose.override.yml` (git-ignored). It
+  pins the compose network to `172.30.0.0/24` and adds a `warp-bridge` socat container that
+  forwards `172.30.0.1:40001` to the host proxy. Then set
+  `PROXY_URL=socks5://172.30.0.1:40001`. With ufw on, allow the bridge:
+  `sudo ufw allow from 172.30.0.0/24 to 172.30.0.1 port 40001 proto tcp`.
+- **Migrating from the old Pyrogram bot**: stop the old `bot.py` process first (only one
+  client can run the bot). Reuse `TELEGRAM_BOT_TOKEN`, `TELEGRAM_API_ID`/`HASH`, `ADMINS`
+  and `LOGGER_CHANNEL_ID` from the old `.env`. `PROXY_HOST`/`PORT`/`TYPE` become one
+  `PROXY_URL`. Keep the server's `cookies/` if they're newer than the repo's. The old
+  `*.session` file is no longer used.
+- **Updating**: `git pull && docker compose up -d --build`. The logout step is only needed
+  once.
+- **Checking**: `docker compose ps`, `docker compose logs -f worker bot`.
 
 ## Commands
 

@@ -1,0 +1,23 @@
+# Optional: let the workers use a SOCKS proxy that only listens on the host's
+# localhost (e.g. Cloudflare WARP in proxy mode on 127.0.0.1:40001).
+#
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+#   echo "PROXY_URL=socks5://172.30.0.1:40001" >> .env
+#   sudo ufw allow from 172.30.0.0/24 to 172.30.0.1 port 40001 proto tcp   # if ufw is on
+#
+# The compose network gets a fixed subnet, and warp-bridge (host network) forwards
+# its gateway IP to the host proxy. It binds only to the bridge, never to a public IP.
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          gateway: 172.30.0.1
+
+services:
+  warp-bridge:
+    image: alpine/socat
+    network_mode: host
+    command: TCP-LISTEN:40001,bind=172.30.0.1,fork,reuseaddr TCP:127.0.0.1:40001
+    restart: unless-stopped

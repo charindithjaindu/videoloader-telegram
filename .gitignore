@@ -32,3 +32,6 @@ Thumbs.db
 # Logs
 *.log
 .pytest_cache/
+
+# Server-local compose overrides
+docker-compose.override.yml
