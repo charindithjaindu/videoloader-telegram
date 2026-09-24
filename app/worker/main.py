@@ -156,7 +156,7 @@ async def deliver_fresh(ctx: dict, job, preset, workdir) -> None:
     cached = cached_from_message(msg, result.title)
     await db.store_cached(pool, job["cache_key"], job["normalized_url"], preset.code, cached)
 
-    if s.logger_channel_id and job["user_id"] not in s.admins:
+    if s.logger_channel_id and not s.is_admin(job["user_id"]):
         t = asyncio.create_task(log_to_channel(bot, s.logger_channel_id, job, cached))
         _background.add(t)
         t.add_done_callback(_background.discard)

@@ -104,7 +104,7 @@ async def on_setting(cb: CallbackQuery, pool: asyncpg.Pool) -> None:
 
 @router.message(Command("stats"))
 async def cmd_stats(message: Message, pool: asyncpg.Pool, redis: Redis, settings: Settings) -> None:
-    if message.from_user.id not in settings.admins:
+    if not settings.is_admin(message.from_user.id):
         return
     s = await db.stats(pool)
     counters = await state.get_stats(redis)
@@ -132,7 +132,9 @@ async def on_link(
     if not url:
         await message.answer("Send me a link (http:// or https://).")
         return
-    if await state.hit_flood_limit(redis, message.from_user.id, settings.links_per_minute):
+    if not settings.is_admin(message.from_user.id) and await state.hit_flood_limit(
+        redis, message.from_user.id, settings.links_per_minute
+    ):
         await message.answer("⏳ Too many links. Wait a minute and try again.")
         return
     user = await db.upsert_user(pool, message.from_user)
@@ -208,7 +210,10 @@ async def start_download(
 
     # --- cache miss: enqueue for a worker ---
     job_id = uuid.uuid4().hex
-    if not await state.acquire_user_slot(redis, user.id, job_id, settings.max_jobs_per_user):
+    # Admins skip the per-user cap (the global DOWNLOAD_CONCURRENCY still applies).
+    if not settings.is_admin(user.id) and not await state.acquire_user_slot(
+        redis, user.id, job_id, settings.max_jobs_per_user
+    ):
         await _safe_edit(
             status,
             f"⏳ You already have {settings.max_jobs_per_user} downloads in progress. "

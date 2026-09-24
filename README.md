@@ -97,6 +97,10 @@ job gives yt-dlp a temporary copy, so the files on disk are never rewritten.
 - `/stats` (admins in `ADMINS` only): queue depth, active downloads, cache hit rate, jobs and
   errors in the last 24h
 
+**Admins** (`ADMINS=id1,id2` in `.env`) skip the per-user limits (`LINKS_PER_MINUTE`,
+`MAX_JOBS_PER_USER`) and aren't copied to the logger channel. The global
+`DOWNLOAD_CONCURRENCY` cap and Telegram's own send limits still apply.
+
 Status flow: `🕒 Queued (#N)` → `⬇️ Downloading 45% …` → `📤 Uploading`, then the status
 message is deleted so only the file stays.
 Failures show one short line: private video, expired/removed link, file too big, source

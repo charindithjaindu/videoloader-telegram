@@ -52,6 +52,10 @@ class Settings(BaseSettings):
             return [int(x) for x in v.replace(" ", "").split(",") if x]
         return v
 
+    def is_admin(self, user_id: int) -> bool:
+        """Admins (ADMINS in .env) can use /stats, aren't logged and skip per-user limits."""
+        return user_id in self.admins
+
     @field_validator("logger_channel_id", mode="before")
     @classmethod
     def _empty_channel(cls, v):
