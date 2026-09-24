@@ -1,0 +1,75 @@
+# Services: telegram-bot-api (local, --local) · bot (webhook ingress) · worker · postgres · redis
+# Nothing is published to the internet: the local Bot API server pulls updates
+# from Telegram over MTProto and pushes them to http://bot:8080/webhook on the
+# internal network, so no nginx/Caddy/HTTPS is needed.
+
+x-app: &app
+  build: .
+  env_file: .env
+  environment:
+    TELEGRAM_API_BASE: http://telegram-bot-api:8081
+    DATABASE_URL: postgresql://videoloader:videoloader@postgres:5432/videoloader
+    REDIS_URL: redis://redis:6379/0
+    DOWNLOADS_DIR: /data/downloads
+  restart: unless-stopped
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+    telegram-bot-api: { condition: service_started }
+
+services:
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:latest
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
+      TELEGRAM_LOCAL: "1"            # --local: 2 GB uploads, file:// paths
+    volumes:
+      - tg-bot-api:/var/lib/telegram-bot-api
+      - downloads:/data/downloads:ro # same absolute path as in the worker
+    restart: unless-stopped
+
+  bot:
+    <<: *app
+    command: python -m app.bot.main
+    expose: ["8080"]
+
+  worker:
+    <<: *app
+    command: arq app.worker.main.WorkerSettings
+    volumes:
+      - downloads:/data/downloads
+      - ./cookies:/app/cookies:ro
+    deploy:
+      replicas: ${WORKER_REPLICAS:-2}
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: videoloader
+      POSTGRES_PASSWORD: videoloader
+      POSTGRES_DB: videoloader
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U videoloader"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  tg-bot-api:
+  downloads:
+  pg-data:
+  redis-data:
