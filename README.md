@@ -1,191 +1,90 @@
-# 📹 Video Downloader
+# 📹 videoloader-telegram
 
-A simple video downloader using yt-dlp that supports multiple platforms including TikTok, Instagram, Facebook, and YouTube.
+Telegram bot that downloads media from YouTube, TikTok, Instagram, X/Twitter, Facebook and
+anything else yt-dlp supports, and sends the file back. Built to scale past a few thousand
+users: webhook ingress on the official Bot API, a Redis job queue, separate download workers,
+and a self-hosted **local Bot API server** for 2 GB uploads.
 
-## 🚀 Features
+## How it works
 
-- ✅ Download videos from multiple platforms
-- 🤖 **Telegram Bot** - Send links, get videos!
-- 🍪 Cookie-based authentication for private content
-- 🎯 Automatic platform detection
-- 📊 Video information extraction
-- 🔧 Easily extensible for new platforms
-
-## 📦 Installation
-
-1. Install dependencies:
-```bash
-pip install -r requirements.txt
+```
+Telegram ⇄ telegram-bot-api (--local) ──webhook──▶ bot (aiogram 3, aiohttp)
+                 ▲      ▲                              │  parse URL → buttons
+                 │      │ file:///data/downloads/...   │  pick → cache lookup (Postgres)
+                 │      │                              │    hit  → sendVideo(file_id), done
+                 │   worker ×N (arq) ◀── Redis queue ──┘    miss → enqueue, "queued #N"
+                 │      │ yt-dlp + ffmpeg (global semaphore)
+                 └──────┘ upload → store file_id → send → delete temp files
 ```
 
-## 🎯 Usage
+- **bot** (`app/bot`): webhook handlers only. They parse, check the cache, enqueue and
+  reply. They never run yt-dlp, ffmpeg or a file upload. The webhook replies 200 right away
+  (`handle_in_background`).
+- **worker** (`app/worker`): arq workers run yt-dlp in a thread, edit progress at most every
+  `PROGRESS_INTERVAL` seconds, and upload through the local server with `file:///abs/path`
+  from the shared volume. Then they store the `file_id`, send the file and delete the temp dir.
+- **Cache**: `sha256(normalized_url | format)` → `{file_id, file_unique_id, size, mime, …}`
+  in Postgres. The same video in the same format is uploaded once and then resent by
+  `file_id`. URLs are normalized (tracking params stripped, `youtu.be`/shorts →
+  `watch?v=`, `twitter.com` → `x.com`, …). If two users request the same video at the same
+  time, a Redis lock makes sure it downloads once.
+- **Limits**:
+  - A Redis semaphore caps simultaneous downloads across all replicas (`DOWNLOAD_CONCURRENCY`).
+  - Each user can have at most `MAX_JOBS_PER_USER` jobs queued or running.
+  - Anti-flood: `LINKS_PER_MINUTE` links per user.
+  - Outgoing messages pass through a Redis GCRA limiter in every process: ~1 msg/s per
+    private chat, 20/min per group, ~30/s globally.
+  - HTTP 429 is retried after `retry_after`.
+- **Storage**: Postgres holds users, jobs and the file cache. Redis holds the queue, FSM
+  storage, rate limits, per-user slots, queue positions and counters.
 
-### Download a video
-```bash
-python main.py <video_url>
-```
+## Deploy (Docker Compose)
 
-### Get video information (without downloading)
-```bash
-python main.py --info <video_url>
-```
-
-### List supported platforms
-```bash
-python main.py --platforms
-```
-
-## 🤖 Telegram Bot Usage
-
-### Setup
-
-1. **Get Telegram API credentials:**
-   - Go to https://my.telegram.org/apps
-   - Create an application and note down your `API_ID` and `API_HASH`
-
-2. **Create a bot with BotFather:**
-   - Open Telegram and search for [@BotFather](https://t.me/BotFather)
-   - Send `/newbot` and follow the instructions
-   - Save your `BOT_TOKEN`
-
-3. **Configure the bot:**
+1. Get `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` from https://my.telegram.org/apps and a bot
+   token from @BotFather.
+2. `cp .env.example .env` and fill it in.
+3. **Once, before the first start**, log the bot out of `api.telegram.org` so the local
+   server can take it over:
    ```bash
-   cp .env.example .env
-   # Edit .env and add your credentials
+   docker compose run --rm --no-deps bot python -m app.scripts.logout
+   ```
+   (After `logOut` the cloud API refuses the bot for ~10 minutes. That's expected.)
+4. Start everything:
+   ```bash
+   docker compose up -d --build
+   docker compose up -d --scale worker=4   # more download workers
    ```
 
-4. **Run the bot:**
-   ```bash
-   python bot.py
-   ```
+Services: `telegram-bot-api` (local mode), `bot`, `worker`, `postgres`, `redis`. The bot sets
+its webhook on the local server to `http://bot:8080/webhook`. The local server fetches updates
+from Telegram itself, so **nothing needs to be exposed publicly and you don't need
+nginx/Caddy/TLS**.
 
-### Using the Bot
+The `downloads` volume is mounted at the same absolute path (`/data/downloads`) in the worker
+and in `telegram-bot-api`. That's what makes `file://` uploads work.
 
-1. Start a chat with your bot on Telegram
-2. Send `/start` to see the welcome message
-3. Send any video link (TikTok, Instagram, Facebook, YouTube, etc.)
-4. Wait for the bot to download and send back the video!
+Cookies for sites that need a login go in `./cookies/<platform>.txt` (`youtube`, `tiktok`,
+`instagram`, `twitter`, `facebook`, …). They're mounted read-only into the workers.
 
-**Bot Commands:**
-- `/start` - Welcome message
-- `/help` - Show help
-- `/platforms` - List supported platforms
+## Commands
 
-## 🔒 Proxy Configuration (Optional)
+- `/start`: short help
+- send any link → pick 🎬 1080p/720p/480p/360p/Best or 🎵 MP3/M4A
+- `/stats` (admins in `ADMINS` only): queue depth, active downloads, cache hit rate, jobs and
+  errors in the last 24h
 
-You can configure a proxy for downloading videos. This is useful for bypassing geographic restrictions or rate limits.
+Status flow: `🕒 Queued (#N)` → `⬇️ Downloading 45% …` → `📤 Uploading` → `✅ Done`.
+Failures show one short line: private video, expired/removed link, file too big, source
+blocked, unsupported link, and so on. Users never see a stack trace.
 
-### Setup Proxy
+## Configuration
 
-1. **Edit your `.env` file** and add:
-   ```bash
-   PROXY_HOST=localhost
-   PROXY_PORT=40000
-   PROXY_TYPE=socks5  # or 'http'
-   ```
+See `.env.example`. Main knobs: `DOWNLOAD_CONCURRENCY` (8–20), `WORKER_MAX_JOBS`,
+`WORKER_REPLICAS`, `MAX_JOBS_PER_USER`, `PROGRESS_INTERVAL`, `PROXY_URL`, `LOGGER_CHANNEL_ID`.
 
-2. **Supported proxy types:**
-   - `socks5` - SOCKS5 proxy (recommended)
-   - `http` - HTTP/HTTPS proxy
-
-3. **To disable proxy:**
-   - Leave `PROXY_HOST` or `PROXY_PORT` empty in `.env`
-   - Or remove these lines entirely
-
-### Example Configurations
-
-**SOCKS5 Proxy (Local):**
-```bash
-PROXY_HOST=localhost
-PROXY_PORT=40000
-PROXY_TYPE=socks5
-```
-
-**HTTP Proxy (Remote):**
-```bash
-PROXY_HOST=proxy.example.com
-PROXY_PORT=8080
-PROXY_TYPE=http
-```
-
-**No Proxy (Default):**
-```bash
-# Leave empty or comment out
-# PROXY_HOST=
-# PROXY_PORT=
-```
-
-The proxy will be used for all downloads in both the CLI (`main.py`) and the Telegram bot (`bot.py`).
-
-## 🍪 Adding Cookies for New Platforms
-
-### For Instagram:
-1. Export your Instagram cookies to `cookies/instagram.txt`
-2. Update `config.py` and set `'enabled': True` for Instagram
-
-### For Facebook:
-1. Export your Facebook cookies to `cookies/facebook.txt`
-2. Update `config.py` and set `'enabled': True` for Facebook
-
-### How to export cookies:
-
-You can use browser extensions like:
-- **Chrome/Edge**: "Get cookies.txt LOCALLY" or "cookies.txt"
-- **Firefox**: "cookies.txt"
-
-Export cookies in Netscape format and save to the `cookies/` folder.
-
-## 📁 Project Structure
-
-```
-videoloader/
-├── main.py           # CLI entry point
-├── bot.py            # Telegram bot
-├── downloader.py     # Core download logic
-├── config.py         # Platform configurations
-├── bot_config.py     # Bot-specific configuration
-├── requirements.txt  # Python dependencies
-├── .env              # Bot credentials (you create this)
-├── .env.example      # Example environment file
-├── cookies/          # Cookie files for different platforms
-│   ├── tiktok.txt
-│   ├── instagram.txt
-│   └── facebook.txt
-└── downloads/        # Downloaded videos (created automatically)
-```
-
-## 🛠️ Supported Platforms
-
-| Platform  | Status | Cookies Required |
-|-----------|--------|------------------|
-| TikTok    | ✅ Ready | Yes |
-| Instagram | ✅ Ready | Yes |
-| Facebook  | ✅ Ready | Yes |
-| YouTube   | ✅ Ready | No |
-
-## 📝 Examples
+## Development
 
 ```bash
-# Download from TikTok
-python main.py https://www.tiktok.com/@user/video/123456789
-
-# Download from YouTube
-python main.py https://www.youtube.com/watch?v=dQw4w9WgXcQ
-
-# Get info about a video
-python main.py --info https://www.tiktok.com/@user/video/123456789
+pip install -r requirements.txt pytest
+pytest
 ```
-
-## 🔧 Customization
-
-Edit `config.py` to:
-- Add new platforms
-- Change download location
-- Modify video quality settings
-- Add custom yt-dlp options
-
-## ⚠️ Notes
-
-- Downloaded videos are saved in the `downloads/` folder
-- Make sure you have permission to download the videos
-- Some platforms may require valid cookies for access to private or restricted content
