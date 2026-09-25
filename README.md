@@ -106,6 +106,8 @@ Status flow: `🕒 Queued (#N)` → `⬇️ Downloading 45% …` → `📤 Uploa
 message is deleted so only the file stays.
 Failures show one short line: private video, expired/removed link, file too big, source
 blocked, unsupported link, and so on. Users never see a stack trace.
+If `LOGGER_CHANNEL_ID` is set, every failed job (admins included) is also posted there with
+the user, link, error code and the underlying error text.
 
 ## Configuration
 

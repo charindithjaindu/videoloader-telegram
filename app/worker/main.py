@@ -111,6 +111,8 @@ async def process_job(ctx: dict, job_id: str) -> str:
         await state.incr_stat(redis, f"error:{code}")
         await db.set_job_status(pool, job_id, "failed", error_code=code)
         await edit_status(bot, chat_id, msg_id, user_message(code))
+        if s.logger_channel_id:
+            _spawn(log_error_to_channel(bot, s.logger_channel_id, job, code, e))
         return f"failed:{code}"
     finally:
         await state.release_user_slot(redis, job["user_id"], job_id)
@@ -157,9 +159,13 @@ async def deliver_fresh(ctx: dict, job, preset, workdir) -> None:
     await db.store_cached(pool, job["cache_key"], job["normalized_url"], preset.code, cached)
 
     if s.logger_channel_id and not s.is_admin(job["user_id"]):
-        t = asyncio.create_task(log_to_channel(bot, s.logger_channel_id, job, cached))
-        _background.add(t)
-        t.add_done_callback(_background.discard)
+        _spawn(log_to_channel(bot, s.logger_channel_id, job, cached))
+
+
+def _spawn(coro) -> None:
+    t = asyncio.create_task(coro)
+    _background.add(t)
+    t.add_done_callback(_background.discard)
 
 
 async def log_to_channel(bot: Bot, channel_id: int, job, cached) -> None:
@@ -172,6 +178,20 @@ async def log_to_channel(bot: Bot, channel_id: int, job, cached) -> None:
                          duration=cached.duration, width=cached.width, height=cached.height)
     except TelegramAPIError as e:
         log.warning("logger channel send failed: %s", e)
+
+
+async def log_error_to_channel(bot: Bot, channel_id: int, job, code: str, exc: Exception) -> None:
+    # JobError(...) from None hides the real cause in __context__; show that instead.
+    cause = exc.__context__ if isinstance(exc, JobError) and exc.__context__ else exc
+    detail = f"{type(cause).__name__}: {cause}"[:1500]
+    text = (
+        f"❌ <a href=\"tg://user?id={job['user_id']}\">{job['user_id']}</a> · {job['format']}"
+        f" · <b>{code}</b>\n{escape(job['url'])}\n<pre>{escape(detail)}</pre>"
+    )
+    try:
+        await bot.send_message(channel_id, text, disable_web_page_preview=True)
+    except TelegramAPIError as e:
+        log.warning("logger channel error send failed: %s", e)
 
 
 async def cleanup_stale_files(ctx: dict) -> None:
