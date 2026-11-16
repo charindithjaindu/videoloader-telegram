@@ -8,7 +8,7 @@ class JobError(Exception):
 
 
 MESSAGES = {
-    "private": "🔒 This video is private or needs a login.",
+    "private": "🔒 This post is private or needs a login.",
     "unavailable": "🚫 This link is expired, deleted or unavailable.",
     "blocked": "⛔ The source blocked the download (geo/age restriction or rate limit). Try again later.",
     "too_big": "📦 The file is too big (over 2 GB). Try a lower quality or audio only.",
@@ -30,7 +30,7 @@ _PATTERNS = [
         "blocked", "rate-limit", "rate limit", "too many requests",
     )),
     ("private", (
-        "private video", "video is private", "login required", "log in", "sign in to view",
+        "private video", "video is private", "login required", "log in", "login page", "sign in to view",
         "requires authentication", "--cookies", "members-only", "join this channel",
     )),
     ("no_format", ("requested format is not available", "format is not available")),

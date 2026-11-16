@@ -1,7 +1,7 @@
 import pytest
 
 from app.formats import cache_key
-from app.urls import detect_platform, extract_url, normalize_url
+from app.urls import detect_platform, extract_url, is_instagram_post, normalize_url
 
 
 @pytest.mark.parametrize("a,b", [
@@ -35,3 +35,15 @@ def test_platform():
     assert detect_platform("https://vm.tiktok.com/abc") == "tiktok"
     assert detect_platform("https://mobile.twitter.com/a") == "twitter"
     assert detect_platform("https://example.com") is None
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("https://www.instagram.com/p/XYZ/?img_index=2", True),
+    ("https://instagram.com/someuser/p/XYZ", True),
+    ("https://www.instagram.com/share/p/XYZ/", True),
+    ("https://www.instagram.com/reel/XYZ/", False),
+    ("https://www.instagram.com/someuser/", False),
+    ("https://example.com/p/XYZ", False),
+])
+def test_instagram_post(url, expected):
+    assert is_instagram_post(url) is expected

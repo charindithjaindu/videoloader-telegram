@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS file_cache (
     cache_key      TEXT PRIMARY KEY,
     normalized_url TEXT NOT NULL,
     format         TEXT NOT NULL,
-    media_type     TEXT NOT NULL,          -- video | audio | document
+    media_type     TEXT NOT NULL,          -- video | audio | photo | document | album
     file_id        TEXT NOT NULL,
     file_unique_id TEXT NOT NULL,
     size           BIGINT,
@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS file_cache (
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_hit_at    TIMESTAMPTZ
 );
+
+-- Albums (media_type = 'album'): JSON list of {media_type, file_id, duration, width, height}.
+ALTER TABLE file_cache ADD COLUMN IF NOT EXISTS items JSONB;
 
 CREATE TABLE IF NOT EXISTS jobs (
     id                TEXT PRIMARY KEY,

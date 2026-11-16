@@ -31,6 +31,7 @@ START_TEXT = (
     "👋 Send me a link from YouTube, TikTok, Instagram, X/Twitter, Facebook, Reddit "
     "and many more sites.\n\n"
     "I'll download it in the best quality and send you the file. Files up to 2 GB.\n"
+    "Instagram photo posts and albums work too.\n"
     "Use /settings to change the default quality or pick audio instead."
 )
 

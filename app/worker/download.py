@@ -1,5 +1,14 @@
-"""yt-dlp wrapper. Blocking: always run it via asyncio.to_thread from the worker."""
+"""yt-dlp / gallery-dl wrappers. Blocking: always run them via asyncio.to_thread from the worker.
+
+yt-dlp handles everything with a video in it. Instagram posts (/p/...) can also be a
+photo or an album of photos and videos, which yt-dlp can't fetch, so those go through
+gallery-dl first.
+"""
+import json
+import logging
 import shutil
+import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,17 +19,21 @@ from yt_dlp.utils import match_filter_func
 from app.config import Settings
 from app.errors import JobError
 from app.formats import Preset
-from app.urls import detect_platform
+from app.urls import detect_platform, is_instagram_post
+
+log = logging.getLogger(__name__)
 
 VIDEO_EXTS = {".mp4", ".mov", ".m4v"}
 AUDIO_EXTS = {".mp3", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".wav"}
+PHOTO_EXTS = {".jpg", ".jpeg", ".png"}  # what Telegram takes as a photo as-is
+IMAGE_EXTS = PHOTO_EXTS | {".webp", ".heic", ".avif"}  # the rest is converted to .jpg
 
 
 @dataclass
 class Downloaded:
     path: Path
     size: int
-    media_type: str  # video | audio | document
+    media_type: str  # video | audio | photo | document
     title: str | None
     duration: int | None
     width: int | None
@@ -33,6 +46,103 @@ def _cookiefile(settings: Settings, url: str) -> str | None:
         return None
     f = settings.cookies_dir / f"{platform}.txt"
     return str(f) if f.is_file() else None
+
+
+def fetch(url: str, preset: Preset, workdir: Path, settings: Settings, progress: dict) -> list[Downloaded]:
+    """Download everything a link points at: one file, or several for an Instagram album."""
+    if preset.kind == "video" and is_instagram_post(url):
+        try:
+            return download_gallery(url, workdir, settings)
+        except Exception as gallery_error:  # noqa: BLE001
+            # gallery-dl needs a login more often than yt-dlp does; a video post may still work.
+            log.info("gallery-dl failed for %s (%s), trying yt-dlp", url, str(gallery_error)[:200])
+            shutil.rmtree(workdir, ignore_errors=True)
+            try:
+                return [download(url, preset, workdir, settings, progress)]
+            except Exception:  # noqa: BLE001
+                raise gallery_error from None
+    return [download(url, preset, workdir, settings, progress)]
+
+
+def download_gallery(url: str, workdir: Path, settings: Settings) -> list[Downloaded]:
+    """Fetch every photo/video of an Instagram post with gallery-dl, in post order."""
+    workdir.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        sys.executable, "-m", "gallery_dl", "--config-ignore", "--no-mtime", "--no-part",
+        "-D", str(workdir), "-f", "{num:>03}_{media_id}.{extension}",  # sorts in post order
+        "--write-metadata", "--retries", "3", "--http-timeout", "30",
+        "--filesize-max", str(settings.max_file_size),
+        "-o", "audio=false",  # no separate music track for photo posts
+    ]
+    if settings.proxy_url:
+        cmd += ["--proxy", settings.proxy_url]
+    # Same as for yt-dlp: ./cookies is read-only, so pass a throwaway copy.
+    with tempfile.TemporaryDirectory() as tmp:
+        if cookiefile := _cookiefile(settings, url):
+            cmd += ["--cookies", shutil.copy(cookiefile, Path(tmp) / "cookies.txt")]
+        try:
+            proc = subprocess.run(cmd + [url], capture_output=True, text=True,
+                                  timeout=max(settings.job_timeout - 120, 60))
+        except subprocess.TimeoutExpired:
+            raise JobError("timeout") from None
+    if proc.returncode != 0:
+        raise RuntimeError(f"gallery-dl: {proc.stderr.strip()[-1000:] or proc.returncode}")
+
+    title = None
+    items: list[Downloaded] = []
+    for path in sorted(p for p in workdir.iterdir() if p.is_file()):
+        ext = path.suffix.lower()
+        if ext == ".json":
+            if title is None:
+                title = _post_title(path)
+            continue
+        if ext in VIDEO_EXTS:
+            duration, width, height = _probe_video(path)
+            items.append(Downloaded(path, path.stat().st_size, "video", None, duration, width, height))
+        elif ext in IMAGE_EXTS:
+            if ext not in PHOTO_EXTS:
+                path = _to_jpg(path)
+            items.append(Downloaded(path, path.stat().st_size, "photo", None, None, None, None))
+    if not items:
+        raise JobError("too_big" if "filesize" in proc.stderr.lower() else "unavailable")
+    for item in items:
+        item.title = title
+    return items
+
+
+def _post_title(metadata_file: Path) -> str | None:
+    try:
+        meta = json.loads(metadata_file.read_text())
+    except (OSError, ValueError):
+        return None
+    user = meta.get("username") or meta.get("fullname")
+    return f"Post by {user}" if user else None
+
+
+def _probe_video(path: Path) -> tuple[int | None, int | None, int | None]:
+    """(duration, width, height) via ffprobe; all None if it can't be read."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=width,height:format=duration", "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=60, check=True,
+        ).stdout
+        data = json.loads(out)
+        stream = (data.get("streams") or [{}])[0]
+        return (round(float(data["format"]["duration"])), int(stream["width"]), int(stream["height"]))
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+        return None, None, None
+
+
+def _to_jpg(path: Path) -> Path:
+    """Convert webp/heic/avif to jpg so Telegram shows it as a photo; keep the original on failure."""
+    target = path.with_suffix(".jpg")
+    try:
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(path), "-q:v", "2", str(target)],
+                       capture_output=True, timeout=120, check=True)
+    except (OSError, subprocess.SubprocessError):
+        return path
+    return target
 
 
 def download(url: str, preset: Preset, workdir: Path, settings: Settings, progress: dict) -> Downloaded:

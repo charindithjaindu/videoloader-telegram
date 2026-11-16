@@ -23,10 +23,16 @@ Telegram ⇄ telegram-bot-api (--local) ──webhook──▶ bot (aiogram 3, a
 - **worker** (`app/worker`): arq workers run yt-dlp in a thread, edit progress at most every
   `PROGRESS_INTERVAL` seconds, and upload through the local server with `file:///abs/path`
   from the shared volume. Then they store the `file_id`, send the file and delete the temp dir.
+- **Instagram posts**: `/p/…` links can be a photo, a video or an album, and yt-dlp only
+  fetches videos. For those the worker runs **gallery-dl** first (same `cookies/instagram.txt`
+  and `PROXY_URL`) and falls back to yt-dlp if it fails. One photo is sent as a photo; several
+  items are sent as a Telegram album (photos and videos mixed, 10 per album, longer posts as
+  several albums). Reels still go through yt-dlp. Audio presets (MP3/M4A) always use yt-dlp.
 - **Cache**: `sha256(normalized_url | format)` → `{file_id, file_unique_id, size, mime, …}`
   in Postgres. The same video in the same format is uploaded once and then resent by
   `file_id`. URLs are normalized (tracking params stripped, `youtu.be`/shorts →
-  `watch?v=`, `twitter.com` → `x.com`, …). If two users request the same video at the same
+  `watch?v=`, `twitter.com` → `x.com`, …). Albums store every item's `file_id`
+  (`file_cache.items`). If two users request the same video at the same
   time, a Redis lock makes sure it downloads once.
 - **Limits**:
   - A Redis semaphore caps simultaneous downloads across all replicas (`DOWNLOAD_CONCURRENCY`).

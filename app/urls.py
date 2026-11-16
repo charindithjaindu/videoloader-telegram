@@ -73,6 +73,15 @@ def normalize_url(url: str) -> str:
     return urlunsplit(("https", host, path, urlencode(sorted(query)), ""))
 
 
+# instagram.com/p/<id>, /<user>/p/<id>, /share/p/<id>: may be a photo, a video or an album.
+_INSTAGRAM_POST_RE = re.compile(r"^/(?:share/|[^/]+/)?p/[^/]+")
+
+
+def is_instagram_post(url: str) -> bool:
+    parts = urlsplit(url)
+    return _host(parts.netloc) == "instagram.com" and bool(_INSTAGRAM_POST_RE.match(parts.path))
+
+
 def detect_platform(url: str) -> str | None:
     host = _host(urlsplit(url).netloc)
     for name, domains in PLATFORMS.items():

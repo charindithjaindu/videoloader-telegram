@@ -1,4 +1,5 @@
 """PostgreSQL access (asyncpg): users, jobs, file_id cache."""
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +32,8 @@ class CachedFile:
     duration: int | None
     width: int | None
     height: int | None
+    # Albums only (media_type == "album"): one dict per photo/video, in post order.
+    items: list[dict] | None = None
 
 
 async def upsert_user(pool: asyncpg.Pool, user) -> asyncpg.Record:
@@ -57,11 +60,16 @@ async def get_cached(pool: asyncpg.Pool, key: str) -> CachedFile | None:
         """
         UPDATE file_cache SET hits = hits + 1, last_hit_at = now()
         WHERE cache_key = $1
-        RETURNING media_type, file_id, file_unique_id, size, mime, title, duration, width, height
+        RETURNING media_type, file_id, file_unique_id, size, mime, title, duration, width, height,
+            items
         """,
         key,
     )
-    return CachedFile(**dict(row)) if row else None
+    if row is None:
+        return None
+    data = dict(row)
+    data["items"] = json.loads(data["items"]) if data["items"] else None
+    return CachedFile(**data)
 
 
 async def delete_cached(pool: asyncpg.Pool, key: str) -> None:
@@ -74,16 +82,17 @@ async def store_cached(
     await pool.execute(
         """
         INSERT INTO file_cache (cache_key, normalized_url, format, media_type, file_id,
-            file_unique_id, size, mime, title, duration, width, height)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            file_unique_id, size, mime, title, duration, width, height, items)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
         ON CONFLICT (cache_key) DO UPDATE SET
             media_type = EXCLUDED.media_type, file_id = EXCLUDED.file_id,
             file_unique_id = EXCLUDED.file_unique_id, size = EXCLUDED.size,
             mime = EXCLUDED.mime, title = EXCLUDED.title, duration = EXCLUDED.duration,
-            width = EXCLUDED.width, height = EXCLUDED.height
+            width = EXCLUDED.width, height = EXCLUDED.height, items = EXCLUDED.items
         """,
         key, normalized_url, fmt, f.media_type, f.file_id, f.file_unique_id,
         f.size, f.mime, f.title, f.duration, f.width, f.height,
+        json.dumps(f.items) if f.items else None,
     )
 
 

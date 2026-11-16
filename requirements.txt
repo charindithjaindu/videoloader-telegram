@@ -4,3 +4,4 @@ asyncpg>=0.29
 redis[hiredis]>=5
 pydantic-settings>=2.7
 yt-dlp[default]
+gallery-dl

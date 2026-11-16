@@ -21,9 +21,9 @@ from app import db, state
 from app.config import Settings, get_settings
 from app.errors import JobError, classify, user_message
 from app.formats import PRESETS
-from app.media import cached_from_message, send_cached, send_media
+from app.media import caption_for, cached_from_album, cached_from_message, send_album, send_cached, send_media
 from app.telegram import make_bot
-from app.worker.download import download
+from app.worker.download import fetch
 
 log = logging.getLogger(__name__)
 _background: set[asyncio.Task] = set()
@@ -133,29 +133,40 @@ async def deliver_fresh(ctx: dict, job, preset, workdir) -> None:
         )
         try:
             async with asyncio.timeout(s.job_timeout - 60):
-                result = await asyncio.to_thread(download, job["url"], preset, workdir, s, progress)
+                results = await asyncio.to_thread(fetch, job["url"], preset, workdir, s, progress)
         except TimeoutError:
             raise JobError("timeout") from None
         finally:
             ticker.cancel()
 
-    await db.set_job_status(pool, job_id, "uploading", file_size=result.size)
-    await edit_status(bot, chat_id, msg_id, f"📤 Uploading ({_mb(result.size)})…")
+    result, size = results[0], sum(r.size for r in results)
+    await db.set_job_status(pool, job_id, "uploading", file_size=size)
+    await edit_status(bot, chat_id, msg_id, f"📤 Uploading ({_mb(size)})…")
     try:
-        # Local Bot API server reads the file straight from the shared volume.
-        msg = await send_media(
-            bot, chat_id, result.media_type, result.path.as_uri(),
-            title=result.title, duration=result.duration,
-            width=result.width, height=result.height,
-            request_timeout=s.upload_timeout, reply_to=job["reply_to_message_id"],
-        )
+        # Local Bot API server reads the files straight from the shared volume.
+        if len(results) > 1:  # Instagram album: photos and videos together, in post order
+            msgs = await send_album(
+                bot, chat_id,
+                [{"media_type": r.media_type, "file": r.path.as_uri(), "duration": r.duration,
+                  "width": r.width, "height": r.height} for r in results],
+                caption=caption_for(result.title, "album"),
+                request_timeout=s.upload_timeout, reply_to=job["reply_to_message_id"],
+            )
+            cached = cached_from_album(msgs, result.title)
+        else:
+            msg = await send_media(
+                bot, chat_id, result.media_type, result.path.as_uri(),
+                title=result.title, duration=result.duration,
+                width=result.width, height=result.height,
+                request_timeout=s.upload_timeout, reply_to=job["reply_to_message_id"],
+            )
+            cached = cached_from_message(msg, result.title)
     except TelegramEntityTooLarge:
         raise JobError("too_big") from None
     except TelegramAPIError as e:
         log.warning("upload failed for %s: %s", job_id, e)
         raise JobError("upload_failed") from None
 
-    cached = cached_from_message(msg, result.title)
     await db.store_cached(pool, job["cache_key"], job["normalized_url"], preset.code, cached)
 
     if s.logger_channel_id and not s.is_admin(job["user_id"]):
@@ -174,8 +185,7 @@ async def log_to_channel(bot: Bot, channel_id: int, job, cached) -> None:
             f"📥 <a href=\"tg://user?id={job['user_id']}\">{job['user_id']}</a> · {job['format']}\n"
             f"{escape(job['url'])}"
         )
-        await send_media(bot, channel_id, cached.media_type, cached.file_id, caption=caption,
-                         duration=cached.duration, width=cached.width, height=cached.height)
+        await send_cached(bot, channel_id, cached, caption=caption)
     except TelegramAPIError as e:
         log.warning("logger channel send failed: %s", e)
 
